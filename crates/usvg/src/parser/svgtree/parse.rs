@@ -295,6 +295,41 @@ pub(crate) fn parse_svg_element<'input>(
     }
 
     let mut insert_attribute = |aid, value: &str, important: bool| {
+        // https://www.w3.org/TR/css-transforms-1/#svg-transform-functions
+        let alias = match (tag_name, aid) {
+            (EId::LinearGradient | EId::RadialGradient, AId::Transform) => {
+                Some(AId::GradientTransform)
+            }
+            (EId::Pattern, AId::Transform) => Some(AId::PatternTransform),
+            _ => None,
+        };
+        let normalized;
+        let value = if alias.is_some() {
+            let value = value.trim();
+            if ["none", "initial", "unset"]
+                .iter()
+                .any(|keyword| value.eq_ignore_ascii_case(keyword))
+            {
+                "matrix(1 0 0 1 0 0)"
+            } else {
+                let Some(transform) = normalize_paint_transform(value) else {
+                    return;
+                };
+                normalized = transform;
+                &normalized
+            }
+        } else {
+            value
+        };
+        let aid = alias.unwrap_or(aid);
+        let value = if aid == AId::StrokeDasharray {
+            let Some(value) = normalize_dasharray(value) else {
+                return;
+            };
+            value
+        } else {
+            value
+        };
         // Check that attribute already exists.
         let idx = doc.attrs[attrs_start_idx..]
             .iter_mut()
@@ -429,6 +464,96 @@ pub(crate) fn parse_svg_element<'input>(
     Ok(node_id)
 }
 
+fn normalize_paint_transform(value: &str) -> Option<String> {
+    if value.is_empty() {
+        return None;
+    }
+    if value.parse::<svgtypes::Transform>().is_ok() {
+        return Some(value.to_owned());
+    }
+    let mut remaining = value;
+    let mut normalized = String::new();
+    while !remaining.trim().is_empty() {
+        let (name, rest) = remaining.trim_start().split_once('(')?;
+        let (args, rest) = rest.split_once(')')?;
+        let args = args.split(',').map(str::trim).collect::<Vec<_>>();
+        if args.iter().any(|arg| arg.is_empty()) {
+            return None;
+        }
+        let name = name.to_ascii_lowercase();
+        let number = |arg: &str| -> Option<f64> {
+            let value = match name.as_str() {
+                "translate" | "translatex" | "translatey" => {
+                    let length = arg.parse::<svgtypes::Length>().ok()?;
+                    match length.unit {
+                        svgtypes::LengthUnit::None | svgtypes::LengthUnit::Px => length.number,
+                        svgtypes::LengthUnit::In => length.number * 96.0,
+                        svgtypes::LengthUnit::Cm => length.number * 96.0 / 2.54,
+                        svgtypes::LengthUnit::Mm => length.number * 96.0 / 25.4,
+                        svgtypes::LengthUnit::Pt => length.number * 96.0 / 72.0,
+                        svgtypes::LengthUnit::Pc => length.number * 16.0,
+                        _ => return None,
+                    }
+                }
+                "rotate" | "skew" | "skewx" | "skewy" => {
+                    arg.parse::<svgtypes::Angle>().ok()?.to_degrees()
+                }
+                "scale" | "scalex" | "scaley" | "matrix" => arg.parse().ok()?,
+                _ => return None,
+            };
+            value.is_finite().then_some(value)
+        };
+        let args = args.into_iter().map(number).collect::<Option<Vec<_>>>()?;
+        match (name.as_str(), args.as_slice()) {
+            ("translate", [x]) | ("translatex", [x]) => {
+                normalized.push_str(&format!("translate({x} 0)"))
+            }
+            ("translatey", [y]) => normalized.push_str(&format!("translate(0 {y})")),
+            ("translate", [x, y]) => normalized.push_str(&format!("translate({x} {y})")),
+            ("scale", [x]) => normalized.push_str(&format!("scale({x})")),
+            ("scalex", [x]) => normalized.push_str(&format!("scale({x} 1)")),
+            ("scaley", [y]) => normalized.push_str(&format!("scale(1 {y})")),
+            ("scale", [x, y]) => normalized.push_str(&format!("scale({x} {y})")),
+            ("rotate", [a]) => normalized.push_str(&format!("rotate({a})")),
+            ("skew" | "skewx", [a]) => normalized.push_str(&format!("skewX({a})")),
+            ("skewy", [a]) => normalized.push_str(&format!("skewY({a})")),
+            ("skew", [x, y]) => normalized.push_str(&format!(
+                "matrix(1 {} {} 1 0 0)",
+                y.to_radians().tan(),
+                x.to_radians().tan()
+            )),
+            ("matrix", [a, b, c, d, e, f]) => {
+                normalized.push_str(&format!("matrix({a} {b} {c} {d} {e} {f})"))
+            }
+            _ => return None,
+        }
+        remaining = rest;
+    }
+    normalized.parse::<svgtypes::Transform>().ok()?;
+    Some(normalized)
+}
+
+fn normalize_dasharray(value: &str) -> Option<&str> {
+    let value = value.trim();
+    if value.eq_ignore_ascii_case("none") || value.eq_ignore_ascii_case("initial") {
+        return Some("none");
+    }
+    if value.eq_ignore_ascii_case("inherit") || value.eq_ignore_ascii_case("unset") {
+        return Some("inherit");
+    }
+    value
+        .split(',')
+        .all(|part| {
+            !part.trim().is_empty()
+                && part.split_ascii_whitespace().all(|token| {
+                    token
+                        .parse::<svgtypes::Length>()
+                        .is_ok_and(|length| length.number.is_finite() && length.number >= 0.0)
+                })
+        })
+        .then_some(value)
+}
+
 fn append_attribute<'input>(
     parent_id: NodeId,
     tag_name: EId,
@@ -452,7 +577,14 @@ fn append_attribute<'input>(
     }
 
     if aid.allows_inherit_value() && &*value == "inherit" {
-        return resolve_inherit(parent_id, aid, doc);
+        if resolve_inherit(parent_id, aid, doc) {
+            return true;
+        }
+        if aid == AId::StrokeDasharray {
+            doc.append_attribute(aid, roxmltree::StringStorage::new_owned("none"), important);
+            return true;
+        }
+        return false;
     }
 
     doc.append_attribute(aid, value, important);

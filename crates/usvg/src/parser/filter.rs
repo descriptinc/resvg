@@ -323,11 +323,10 @@ fn collect_children(
 
         let filter_subregion = match resolve_primitive_region(
             child,
-            tag_name,
             units,
             state,
             object_bbox,
-            filter_region,
+            default_primitive_region(child, tag_name, &primitives, filter_region),
         ) {
             Some(v) => v,
             None => break,
@@ -378,10 +377,50 @@ fn collect_children(
     primitives
 }
 
-// TODO: rewrite/simplify/explain/whatever
-fn resolve_primitive_region(
+// https://www.w3.org/TR/filter-effects-1/#FilterPrimitiveSubRegion
+fn default_primitive_region(
     fe: SvgNode,
     kind: EId,
+    primitives: &[Primitive],
+    filter_region: NonZeroRect,
+) -> NonZeroRect {
+    let inputs = match kind {
+        EId::FeFlood | EId::FeImage | EId::FeTurbulence | EId::FeTile => return filter_region,
+        EId::FeMerge => fe
+            .children()
+            .filter(|node| node.tag_name() == Some(EId::FeMergeNode))
+            .map(|node| resolve_input(node, AId::In, primitives))
+            .collect::<Vec<_>>(),
+        EId::FeBlend | EId::FeComposite | EId::FeDisplacementMap => vec![
+            resolve_input(fe, AId::In, primitives),
+            resolve_input(fe, AId::In2, primitives),
+        ],
+        _ => vec![resolve_input(fe, AId::In, primitives)],
+    };
+    let mut region: Option<NonZeroRect> = None;
+    for input in inputs {
+        let Input::Reference(name) = input else {
+            return filter_region;
+        };
+        let Some(primitive) = primitives.iter().rev().find(|p| p.result == name) else {
+            return filter_region;
+        };
+        region = match region {
+            Some(region) => region
+                .to_rect()
+                .join(&primitive.rect.to_rect())
+                .and_then(|rect| rect.to_non_zero_rect()),
+            None => Some(primitive.rect),
+        };
+        if region.is_none() {
+            return filter_region;
+        }
+    }
+    region.unwrap_or(filter_region)
+}
+
+fn resolve_primitive_region(
+    fe: SvgNode,
     units: Units,
     state: &converter::State,
     bbox: Option<NonZeroRect>,
@@ -392,48 +431,23 @@ fn resolve_primitive_region(
     let width = fe.try_convert_length(AId::Width, units, state);
     let height = fe.try_convert_length(AId::Height, units, state);
 
-    let region = match kind {
-        EId::FeFlood | EId::FeImage => {
-            // `feImage` uses the object bbox.
-            if units == Units::ObjectBoundingBox {
-                let bbox = bbox?;
-
-                // TODO: wrong
-                // let ts_bbox = tiny_skia::Rect::new(ts.e, ts.f, ts.a, ts.d).unwrap();
-
-                let r = NonZeroRect::from_xywh(
-                    x.unwrap_or(0.0),
-                    y.unwrap_or(0.0),
-                    width.unwrap_or(1.0),
-                    height.unwrap_or(1.0),
-                )?;
-
-                return Some(r.bbox_transform(bbox));
-            } else {
-                filter_region
-            }
-        }
-        _ => filter_region,
-    };
-
-    // TODO: Wrong! Does not account rotate and skew.
-    if units == Units::ObjectBoundingBox {
-        let subregion_bbox = NonZeroRect::from_xywh(
-            x.unwrap_or(0.0),
-            y.unwrap_or(0.0),
-            width.unwrap_or(1.0),
-            height.unwrap_or(1.0),
-        )?;
-
-        Some(region.bbox_transform(subregion_bbox))
-    } else {
-        NonZeroRect::from_xywh(
-            x.unwrap_or(region.x()),
-            y.unwrap_or(region.y()),
-            width.unwrap_or(region.width()),
-            height.unwrap_or(region.height()),
+    let (x, y, width, height) = if units == Units::ObjectBoundingBox {
+        let bbox = bbox?;
+        (
+            x.map(|value| bbox.x() + value * bbox.width()),
+            y.map(|value| bbox.y() + value * bbox.height()),
+            width.map(|value| value * bbox.width()),
+            height.map(|value| value * bbox.height()),
         )
-    }
+    } else {
+        (x, y, width, height)
+    };
+    NonZeroRect::from_xywh(
+        x.unwrap_or(filter_region.x()),
+        y.unwrap_or(filter_region.y()),
+        width.unwrap_or(filter_region.width()),
+        height.unwrap_or(filter_region.height()),
+    )
 }
 
 // A malformed filter primitive usually should produce a transparent image.

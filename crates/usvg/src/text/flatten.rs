@@ -102,6 +102,46 @@ pub(crate) fn flatten(text: &mut Text, cache: &mut Cache) -> Option<(Group, NonZ
         let mut span_builder = tiny_skia_path::PathBuilder::new();
 
         for glyph in &span.positioned_glyphs {
+            if let Some(raster) = &glyph.raster {
+                push_outline_paths(
+                    span,
+                    &mut span_builder,
+                    &mut new_children,
+                    rendering_mode,
+                    abs_transform,
+                );
+                let transform = glyph
+                    .raster_transform(raster.left, raster.top)
+                    .pre_scale(raster.image_scale, raster.image_scale);
+                let image_transform = abs_transform.pre_concat(transform);
+                let mut group = Group {
+                    transform,
+                    abs_transform: image_transform,
+                    opacity: span
+                        .fill
+                        .as_ref()
+                        .map_or(Opacity::ZERO, |fill| fill.opacity()),
+                    ..Group::empty()
+                };
+                if let Some(bounds) = raster
+                    .size
+                    .to_non_zero_rect(0.0, 0.0)
+                    .transform(image_transform)
+                {
+                    group.children.push(Node::Image(Box::new(Image {
+                        id: String::new(),
+                        visible: span.visible,
+                        size: raster.size,
+                        rendering_mode: ImageRendering::OptimizeQuality,
+                        kind: raster.image.clone(),
+                        abs_transform: image_transform,
+                        abs_bounding_box: bounds,
+                    })));
+                    group.calculate_bounding_boxes();
+                    new_children.push(Node::Group(Box::new(group)));
+                }
+                continue;
+            }
             let variations = effective_variations(cache, span, glyph);
 
             // A (best-effort conversion of a) COLR glyph.
@@ -393,6 +433,13 @@ impl DatabaseExt for Database {
                     .map(|v| (Tag::from_be_bytes(v.tag), v.value)),
             );
 
+            let color_glyph = font.color_glyphs().get(glyph_id.into())?;
+            if let skrifa::color::ColorGlyphFormat::ColrV1 = color_glyph.format() {
+                let colr = font.colr().ok()?;
+                let (paint, _) = colr.v1_base_glyph(glyph_id.into()).ok()??;
+                super::colr::validate_paint_graph(&colr, paint)?;
+            }
+
             let mut svg = XmlWriter::new(xmlwriter::Options::default());
 
             svg.start_element("svg");
@@ -419,10 +466,7 @@ impl DatabaseExt for Database {
                 clip_stack: Vec::new(),
             };
 
-            font.color_glyphs()
-                .get(glyph_id.into())?
-                .paint(&location, &mut glyph_painter)
-                .ok()?;
+            color_glyph.paint(&location, &mut glyph_painter).ok()?;
             svg.end_element();
 
             Tree::from_data(svg.end_document().as_bytes(), &Options::default()).ok()

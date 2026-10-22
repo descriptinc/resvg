@@ -15,6 +15,107 @@ use svgtypes::Color;
 
 use super::transform::{skrifa_to_tsp_transform, tsp_to_skrifa_transform};
 
+const MAX_PAINT_VISITS: usize = 100_000;
+const MAX_PAINT_DEPTH: usize = 64;
+
+pub(super) fn validate_paint_graph(
+    colr: &skrifa::raw::tables::colr::Colr<'_>,
+    paint: skrifa::raw::tables::colr::Paint<'_>,
+) -> Option<()> {
+    let mut remaining = MAX_PAINT_VISITS;
+    validate_paint(colr, paint, 0, &mut remaining)
+}
+
+fn validate_paint(
+    colr: &skrifa::raw::tables::colr::Colr<'_>,
+    paint: skrifa::raw::tables::colr::Paint<'_>,
+    depth: usize,
+    remaining: &mut usize,
+) -> Option<()> {
+    use skrifa::raw::tables::colr::Paint;
+
+    if depth >= MAX_PAINT_DEPTH || *remaining == 0 {
+        return None;
+    }
+    *remaining -= 1;
+    match paint {
+        Paint::ColrLayers(paint) => {
+            let start = paint.first_layer_index() as usize;
+            for index in start..start.checked_add(paint.num_layers() as usize)? {
+                validate_paint(colr, colr.v1_layer(index).ok()?.0, depth + 1, remaining)?;
+            }
+        }
+        Paint::ColrGlyph(paint) => {
+            let (paint, _) = colr.v1_base_glyph(paint.glyph_id().into()).ok()??;
+            validate_paint(colr, paint, depth + 1, remaining)?;
+        }
+        Paint::Glyph(paint) => {
+            // skrifa 0.44 may visit this subtree twice when its fill-glyph optimization fails.
+            // https://github.com/googlefonts/fontations/blob/skrifa-v0.44.0/skrifa/src/color/traversal.rs
+            for _ in 0..2 {
+                validate_paint(colr, paint.paint().ok()?, depth + 1, remaining)?;
+            }
+        }
+        Paint::Composite(paint) => {
+            validate_paint(colr, paint.source_paint().ok()?, depth + 1, remaining)?;
+            validate_paint(colr, paint.backdrop_paint().ok()?, depth + 1, remaining)?;
+        }
+        Paint::Transform(paint) => validate_paint(colr, paint.paint().ok()?, depth + 1, remaining)?,
+        Paint::VarTransform(paint) => {
+            validate_paint(colr, paint.paint().ok()?, depth + 1, remaining)?
+        }
+        Paint::Translate(paint) => validate_paint(colr, paint.paint().ok()?, depth + 1, remaining)?,
+        Paint::VarTranslate(paint) => {
+            validate_paint(colr, paint.paint().ok()?, depth + 1, remaining)?
+        }
+        Paint::Scale(paint) => validate_paint(colr, paint.paint().ok()?, depth + 1, remaining)?,
+        Paint::VarScale(paint) => validate_paint(colr, paint.paint().ok()?, depth + 1, remaining)?,
+        Paint::ScaleAroundCenter(paint) => {
+            validate_paint(colr, paint.paint().ok()?, depth + 1, remaining)?
+        }
+        Paint::VarScaleAroundCenter(paint) => {
+            validate_paint(colr, paint.paint().ok()?, depth + 1, remaining)?
+        }
+        Paint::ScaleUniform(paint) => {
+            validate_paint(colr, paint.paint().ok()?, depth + 1, remaining)?
+        }
+        Paint::VarScaleUniform(paint) => {
+            validate_paint(colr, paint.paint().ok()?, depth + 1, remaining)?
+        }
+        Paint::ScaleUniformAroundCenter(paint) => {
+            validate_paint(colr, paint.paint().ok()?, depth + 1, remaining)?
+        }
+        Paint::VarScaleUniformAroundCenter(paint) => {
+            validate_paint(colr, paint.paint().ok()?, depth + 1, remaining)?
+        }
+        Paint::Rotate(paint) => validate_paint(colr, paint.paint().ok()?, depth + 1, remaining)?,
+        Paint::VarRotate(paint) => validate_paint(colr, paint.paint().ok()?, depth + 1, remaining)?,
+        Paint::RotateAroundCenter(paint) => {
+            validate_paint(colr, paint.paint().ok()?, depth + 1, remaining)?
+        }
+        Paint::VarRotateAroundCenter(paint) => {
+            validate_paint(colr, paint.paint().ok()?, depth + 1, remaining)?
+        }
+        Paint::Skew(paint) => validate_paint(colr, paint.paint().ok()?, depth + 1, remaining)?,
+        Paint::VarSkew(paint) => validate_paint(colr, paint.paint().ok()?, depth + 1, remaining)?,
+        Paint::SkewAroundCenter(paint) => {
+            validate_paint(colr, paint.paint().ok()?, depth + 1, remaining)?
+        }
+        Paint::VarSkewAroundCenter(paint) => {
+            validate_paint(colr, paint.paint().ok()?, depth + 1, remaining)?
+        }
+        Paint::Solid(_)
+        | Paint::VarSolid(_)
+        | Paint::LinearGradient(_)
+        | Paint::VarLinearGradient(_)
+        | Paint::RadialGradient(_)
+        | Paint::VarRadialGradient(_)
+        | Paint::SweepGradient(_)
+        | Paint::VarSweepGradient(_) => {}
+    }
+    Some(())
+}
+
 struct Builder<'a> {
     path: &'a mut String,
     min_x: f32,

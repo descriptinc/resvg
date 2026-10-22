@@ -190,7 +190,7 @@ fn write_filters(tree: &Tree, opt: &WriteOptions, xml: &mut XmlWriter) {
             match fe.kind {
                 filter::Kind::DropShadow(ref shadow) => {
                     xml.start_svg_element(EId::FeDropShadow);
-                    xml.write_filter_primitive_attrs(filter.rect(), fe);
+                    xml.write_filter_primitive_attrs(fe);
                     xml.write_filter_input(AId::In, &shadow.input);
                     xml.write_attribute_fmt(
                         AId::StdDeviation.to_str(),
@@ -205,7 +205,7 @@ fn write_filters(tree: &Tree, opt: &WriteOptions, xml: &mut XmlWriter) {
                 }
                 filter::Kind::GaussianBlur(ref blur) => {
                     xml.start_svg_element(EId::FeGaussianBlur);
-                    xml.write_filter_primitive_attrs(filter.rect(), fe);
+                    xml.write_filter_primitive_attrs(fe);
                     xml.write_filter_input(AId::In, &blur.input);
                     xml.write_attribute_fmt(
                         AId::StdDeviation.to_str(),
@@ -216,7 +216,7 @@ fn write_filters(tree: &Tree, opt: &WriteOptions, xml: &mut XmlWriter) {
                 }
                 filter::Kind::Offset(ref offset) => {
                     xml.start_svg_element(EId::FeOffset);
-                    xml.write_filter_primitive_attrs(filter.rect(), fe);
+                    xml.write_filter_primitive_attrs(fe);
                     xml.write_filter_input(AId::In, &offset.input);
                     xml.write_svg_attribute(AId::Dx, &offset.dx);
                     xml.write_svg_attribute(AId::Dy, &offset.dy);
@@ -225,7 +225,7 @@ fn write_filters(tree: &Tree, opt: &WriteOptions, xml: &mut XmlWriter) {
                 }
                 filter::Kind::Blend(ref blend) => {
                     xml.start_svg_element(EId::FeBlend);
-                    xml.write_filter_primitive_attrs(filter.rect(), fe);
+                    xml.write_filter_primitive_attrs(fe);
                     xml.write_filter_input(AId::In, &blend.input1);
                     xml.write_filter_input(AId::In2, &blend.input2);
                     xml.write_svg_attribute(AId::Mode, &blend.mode.to_string());
@@ -234,7 +234,7 @@ fn write_filters(tree: &Tree, opt: &WriteOptions, xml: &mut XmlWriter) {
                 }
                 filter::Kind::Flood(ref flood) => {
                     xml.start_svg_element(EId::FeFlood);
-                    xml.write_filter_primitive_attrs(filter.rect(), fe);
+                    xml.write_filter_primitive_attrs(fe);
                     xml.write_color(AId::FloodColor, flood.color);
                     xml.write_svg_attribute(AId::FloodOpacity, &flood.opacity.get());
                     xml.write_svg_attribute(AId::Result, &fe.result);
@@ -242,7 +242,7 @@ fn write_filters(tree: &Tree, opt: &WriteOptions, xml: &mut XmlWriter) {
                 }
                 filter::Kind::Composite(ref composite) => {
                     xml.start_svg_element(EId::FeComposite);
-                    xml.write_filter_primitive_attrs(filter.rect(), fe);
+                    xml.write_filter_primitive_attrs(fe);
                     xml.write_filter_input(AId::In, &composite.input1);
                     xml.write_filter_input(AId::In2, &composite.input2);
                     xml.write_svg_attribute(
@@ -271,7 +271,7 @@ fn write_filters(tree: &Tree, opt: &WriteOptions, xml: &mut XmlWriter) {
                 }
                 filter::Kind::Merge(ref merge) => {
                     xml.start_svg_element(EId::FeMerge);
-                    xml.write_filter_primitive_attrs(filter.rect(), fe);
+                    xml.write_filter_primitive_attrs(fe);
                     xml.write_svg_attribute(AId::Result, &fe.result);
                     for input in &merge.inputs {
                         xml.start_svg_element(EId::FeMergeNode);
@@ -283,14 +283,14 @@ fn write_filters(tree: &Tree, opt: &WriteOptions, xml: &mut XmlWriter) {
                 }
                 filter::Kind::Tile(ref tile) => {
                     xml.start_svg_element(EId::FeTile);
-                    xml.write_filter_primitive_attrs(filter.rect(), fe);
+                    xml.write_filter_primitive_attrs(fe);
                     xml.write_filter_input(AId::In, &tile.input);
                     xml.write_svg_attribute(AId::Result, &fe.result);
                     xml.end_element();
                 }
                 filter::Kind::Image(ref img) => {
                     xml.start_svg_element(EId::FeImage);
-                    xml.write_filter_primitive_attrs(filter.rect(), fe);
+                    xml.write_filter_primitive_attrs(fe);
                     if let Some(child) = img.root.children.first() {
                         let prefix = opt.id_prefix.as_deref().unwrap_or_default();
                         xml.write_attribute_fmt(
@@ -304,7 +304,7 @@ fn write_filters(tree: &Tree, opt: &WriteOptions, xml: &mut XmlWriter) {
                 }
                 filter::Kind::ComponentTransfer(ref transfer) => {
                     xml.start_svg_element(EId::FeComponentTransfer);
-                    xml.write_filter_primitive_attrs(filter.rect(), fe);
+                    xml.write_filter_primitive_attrs(fe);
                     xml.write_filter_input(AId::In, &transfer.input);
                     xml.write_svg_attribute(AId::Result, &fe.result);
 
@@ -317,7 +317,7 @@ fn write_filters(tree: &Tree, opt: &WriteOptions, xml: &mut XmlWriter) {
                 }
                 filter::Kind::ColorMatrix(ref matrix) => {
                     xml.start_svg_element(EId::FeColorMatrix);
-                    xml.write_filter_primitive_attrs(filter.rect(), fe);
+                    xml.write_filter_primitive_attrs(fe);
                     xml.write_filter_input(AId::In, &matrix.input);
                     xml.write_svg_attribute(AId::Result, &fe.result);
 
@@ -343,7 +343,7 @@ fn write_filters(tree: &Tree, opt: &WriteOptions, xml: &mut XmlWriter) {
                 }
                 filter::Kind::ConvolveMatrix(ref matrix) => {
                     xml.start_svg_element(EId::FeConvolveMatrix);
-                    xml.write_filter_primitive_attrs(filter.rect(), fe);
+                    xml.write_filter_primitive_attrs(fe);
                     xml.write_filter_input(AId::In, &matrix.input);
                     xml.write_svg_attribute(AId::Result, &fe.result);
 
@@ -377,7 +377,7 @@ fn write_filters(tree: &Tree, opt: &WriteOptions, xml: &mut XmlWriter) {
                 }
                 filter::Kind::Morphology(ref morphology) => {
                     xml.start_svg_element(EId::FeMorphology);
-                    xml.write_filter_primitive_attrs(filter.rect(), fe);
+                    xml.write_filter_primitive_attrs(fe);
                     xml.write_filter_input(AId::In, &morphology.input);
                     xml.write_svg_attribute(AId::Result, &fe.result);
 
@@ -401,7 +401,7 @@ fn write_filters(tree: &Tree, opt: &WriteOptions, xml: &mut XmlWriter) {
                 }
                 filter::Kind::DisplacementMap(ref map) => {
                     xml.start_svg_element(EId::FeDisplacementMap);
-                    xml.write_filter_primitive_attrs(filter.rect(), fe);
+                    xml.write_filter_primitive_attrs(fe);
                     xml.write_filter_input(AId::In, &map.input1);
                     xml.write_filter_input(AId::In2, &map.input2);
                     xml.write_svg_attribute(AId::Result, &fe.result);
@@ -426,7 +426,7 @@ fn write_filters(tree: &Tree, opt: &WriteOptions, xml: &mut XmlWriter) {
                 }
                 filter::Kind::Turbulence(ref turbulence) => {
                     xml.start_svg_element(EId::FeTurbulence);
-                    xml.write_filter_primitive_attrs(filter.rect(), fe);
+                    xml.write_filter_primitive_attrs(fe);
                     xml.write_svg_attribute(AId::Result, &fe.result);
 
                     xml.write_attribute_fmt(
@@ -458,7 +458,7 @@ fn write_filters(tree: &Tree, opt: &WriteOptions, xml: &mut XmlWriter) {
                 }
                 filter::Kind::DiffuseLighting(ref light) => {
                     xml.start_svg_element(EId::FeDiffuseLighting);
-                    xml.write_filter_primitive_attrs(filter.rect(), fe);
+                    xml.write_filter_primitive_attrs(fe);
                     xml.write_svg_attribute(AId::Result, &fe.result);
 
                     xml.write_svg_attribute(AId::SurfaceScale, &light.surface_scale);
@@ -470,7 +470,7 @@ fn write_filters(tree: &Tree, opt: &WriteOptions, xml: &mut XmlWriter) {
                 }
                 filter::Kind::SpecularLighting(ref light) => {
                     xml.start_svg_element(EId::FeSpecularLighting);
-                    xml.write_filter_primitive_attrs(filter.rect(), fe);
+                    xml.write_filter_primitive_attrs(fe);
                     xml.write_svg_attribute(AId::Result, &fe.result);
 
                     xml.write_svg_attribute(AId::SurfaceScale, &light.surface_scale);
@@ -909,7 +909,7 @@ trait XmlWriterExt {
     fn write_numbers(&mut self, aid: AId, list: &[f32]);
     fn write_image_data(&mut self, kind: &ImageKind);
     fn write_filter_input(&mut self, id: AId, input: &filter::Input);
-    fn write_filter_primitive_attrs(&mut self, parent_rect: NonZeroRect, fe: &filter::Primitive);
+    fn write_filter_primitive_attrs(&mut self, fe: &filter::Primitive);
     fn write_filter_transfer_function(&mut self, eid: EId, fe: &filter::TransferFunction);
 }
 
@@ -1022,19 +1022,11 @@ impl XmlWriterExt for XmlWriter {
         );
     }
 
-    fn write_filter_primitive_attrs(&mut self, parent_rect: NonZeroRect, fe: &filter::Primitive) {
-        if parent_rect.x() != fe.rect().x() {
-            self.write_svg_attribute(AId::X, &fe.rect().x());
-        }
-        if parent_rect.y() != fe.rect().y() {
-            self.write_svg_attribute(AId::Y, &fe.rect().y());
-        }
-        if parent_rect.width() != fe.rect().width() {
-            self.write_svg_attribute(AId::Width, &fe.rect().width());
-        }
-        if parent_rect.height() != fe.rect().height() {
-            self.write_svg_attribute(AId::Height, &fe.rect().height());
-        }
+    fn write_filter_primitive_attrs(&mut self, fe: &filter::Primitive) {
+        self.write_svg_attribute(AId::X, &fe.rect().x());
+        self.write_svg_attribute(AId::Y, &fe.rect().y());
+        self.write_svg_attribute(AId::Width, &fe.rect().width());
+        self.write_svg_attribute(AId::Height, &fe.rect().height());
 
         self.write_attribute(
             AId::ColorInterpolationFilters.to_str(),
@@ -1300,6 +1292,9 @@ fn write_fill(fill: &Option<Fill>, is_clip_path: bool, opt: &WriteOptions, xml: 
 
 fn write_stroke(stroke: &Option<Stroke>, opt: &WriteOptions, xml: &mut XmlWriter) {
     if let Some(stroke) = stroke {
+        if stroke.non_scaling {
+            xml.write_svg_attribute(AId::VectorEffect, "non-scaling-stroke");
+        }
         write_paint(AId::Stroke, &stroke.paint, opt, xml);
 
         if stroke.opacity != Opacity::ONE {

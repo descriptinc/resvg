@@ -137,6 +137,7 @@ pub(crate) fn resolve_stroke(
         width,
         linecap: node.find_attribute(AId::StrokeLinecap).unwrap_or_default(),
         linejoin: node.find_attribute(AId::StrokeLinejoin).unwrap_or_default(),
+        non_scaling: node.attribute(AId::VectorEffect) == Some("non-scaling-stroke"),
         context_element,
     };
 

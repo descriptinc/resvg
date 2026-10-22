@@ -588,12 +588,19 @@ pub struct Stroke {
     pub(crate) width: StrokeWidth,
     pub(crate) linecap: LineCap,
     pub(crate) linejoin: LineJoin,
+    pub(crate) non_scaling: bool,
     // Whether the current stroke needs to be resolved relative
     // to a context element.
     pub(crate) context_element: Option<ContextElement>,
 }
 
 impl Stroke {
+    /// SVG 2 vector-effect: stroke widths are measured in the host viewport.
+    /// https://www.w3.org/TR/SVG2/coords.html#VectorEffects
+    pub fn non_scaling(&self) -> bool {
+        self.non_scaling
+    }
+
     /// Stroke paint.
     pub fn paint(&self) -> &Paint {
         &self.paint
@@ -1319,11 +1326,11 @@ impl Path {
         abs_transform: Transform,
     ) -> Option<Self> {
         let bounding_box = data.compute_tight_bounds()?;
-        let stroke_bounding_box =
+        let mut stroke_bounding_box =
             Path::calculate_stroke_bbox(stroke.as_ref(), &data).unwrap_or(bounding_box);
 
         let abs_bounding_box: Rect;
-        let abs_stroke_bounding_box: Rect;
+        let mut abs_stroke_bounding_box: Rect;
         if abs_transform.has_skew() {
             // TODO: avoid re-alloc
             let path2 = data.as_ref().clone();
@@ -1335,6 +1342,16 @@ impl Path {
             // A transform without a skew can be performed just on a bbox.
             abs_bounding_box = bounding_box.transform(abs_transform)?;
             abs_stroke_bounding_box = stroke_bounding_box.transform(abs_transform)?;
+        }
+
+        if stroke.as_ref().is_some_and(|stroke| stroke.non_scaling) {
+            let transformed = data.as_ref().clone().transform(abs_transform)?;
+            let non_scaling_bounds = Self::calculate_stroke_bbox(stroke.as_ref(), &transformed)
+                .unwrap_or(abs_bounding_box);
+            // resvg 0.48 rasterizes strokes with scaling even when vector-effect is set.
+            abs_stroke_bounding_box = abs_stroke_bounding_box.join(&non_scaling_bounds)?;
+            stroke_bounding_box = stroke_bounding_box
+                .join(&non_scaling_bounds.transform(abs_transform.invert()?)?)?;
         }
 
         Some(Path {

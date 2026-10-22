@@ -140,7 +140,18 @@ pub(crate) fn convert(
         layouted: vec![],
     };
 
-    if text::convert(&mut text, &state.opt.font_resolver, cache).is_none() {
+    let resolver = &state.opt.font_resolver;
+    let select_font = &resolver.select_font;
+    let select_fallback = &resolver.select_fallback;
+    let clip_resolver = state.parent_clip_path.map(|_| FontResolver {
+        select_font: Box::new(move |font, fontdb| select_font(font, fontdb)),
+        select_fallback: Box::new(move |character, used_fonts, fontdb| {
+            select_fallback(character, used_fonts, fontdb)
+        }),
+        raster_glyphs: None,
+    });
+    let resolver = clip_resolver.as_ref().unwrap_or(resolver);
+    if text::convert(&mut text, resolver, cache).is_none() {
         return;
     }
 

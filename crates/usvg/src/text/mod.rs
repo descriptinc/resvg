@@ -13,6 +13,8 @@ pub(crate) mod flatten;
 mod transform;
 
 mod colr;
+mod raster_glyph;
+pub use raster_glyph::{RasterGlyph, RasterGlyphsFn};
 /// Provides access to the layout of a text node.
 pub mod layout;
 
@@ -79,6 +81,9 @@ pub struct FontResolver<'a> {
     /// Resolver function that will be used when selecting a fallback font for a
     /// character.
     pub select_fallback: FallbackSelectionFn<'a>,
+
+    /// Replaces complete text sequences before font fallback and positioning.
+    pub raster_glyphs: Option<RasterGlyphsFn<'a>>,
 }
 
 impl Default for FontResolver<'_> {
@@ -86,6 +91,7 @@ impl Default for FontResolver<'_> {
         FontResolver {
             select_font: FontResolver::default_font_selector(),
             select_fallback: FontResolver::default_fallback_selector(),
+            raster_glyphs: None,
         }
     }
 }

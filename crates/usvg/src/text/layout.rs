@@ -48,9 +48,15 @@ pub struct PositionedGlyph {
     /// The ID of the font the glyph should be taken from. Can be used with the
     /// [font database of the tree](crate::Tree::fontdb) this glyph is part of.
     pub font: ID,
+    pub(crate) raster: Option<Arc<crate::RasterGlyph>>,
 }
 
 impl PositionedGlyph {
+    pub(crate) fn raster_transform(&self, left: f32, top: f32) -> Transform {
+        self.span_ts
+            .pre_concat(self.cluster_ts)
+            .pre_translate(left, top)
+    }
     /// Returns the font size for this glyph.
     pub fn font_size(&self) -> f32 {
         self.font_size
@@ -1175,11 +1181,15 @@ fn form_glyph_clusters(glyphs: &[Glyph], text: &str, font_size: f32) -> GlyphClu
             font: glyph.font.id,
             text: glyph.text.clone(),
             id: glyph.id,
+            raster: glyph.raster.clone(),
         });
 
         x += glyph.width as f32;
 
-        let glyph_width = glyph.width as f32 * sx;
+        let glyph_width = glyph
+            .raster
+            .as_ref()
+            .map_or(glyph.width as f32 * sx, |raster| raster.advance);
         advance += glyph_width;
         if glyph_width > width {
             width = glyph_width;
@@ -1188,13 +1198,25 @@ fn form_glyph_clusters(glyphs: &[Glyph], text: &str, font_size: f32) -> GlyphClu
 
     let byte_idx = glyphs[0].byte_idx;
     let font = glyphs[0].font.clone();
+    let ascent = glyphs
+        .iter()
+        .filter_map(|g| g.raster.as_ref())
+        .fold(font.ascent(font_size), |ascent, glyph| {
+            ascent.max(-glyph.top)
+        });
+    let descent = glyphs
+        .iter()
+        .filter_map(|g| g.raster.as_ref())
+        .fold(font.descent(font_size), |descent, glyph| {
+            descent.min(-glyph.top - glyph.size.height() * glyph.image_scale)
+        });
     GlyphCluster {
         byte_idx,
         codepoint: byte_idx.char_from(text),
         width,
         advance,
-        ascent: font.ascent(font_size),
-        descent: font.descent(font_size),
+        ascent,
+        descent,
         has_relative_shift: false,
         transform: Transform::default(),
         path_transform: Transform::default(),
@@ -1330,6 +1352,12 @@ pub(crate) fn shape_text(
     resolver: &FontResolver,
     fontdb: &mut Arc<fontdb::Database>,
 ) -> Vec<Glyph> {
+    let raster_glyphs = resolver
+        .raster_glyphs
+        .as_ref()
+        .map_or_else(Vec::new, |resolve| {
+            super::raster_glyph::valid_glyphs(text, resolve(text, font_size))
+        });
     let mut glyphs = shape_text_with_font(
         text,
         font.clone(),
@@ -1339,6 +1367,7 @@ pub(crate) fn shape_text(
         font_size,
         font_optical_sizing,
         fontdb,
+        &raster_glyphs,
     )
     .unwrap_or_default();
 
@@ -1373,6 +1402,7 @@ pub(crate) fn shape_text(
                 font_size,
                 font_optical_sizing,
                 fontdb,
+                &raster_glyphs,
             )
             .unwrap_or_default();
 
@@ -1433,6 +1463,7 @@ fn shape_text_with_font(
     font_size: f32,
     font_optical_sizing: crate::FontOpticalSizing,
     fontdb: &fontdb::Database,
+    raster_glyphs: &[Arc<crate::RasterGlyph>],
 ) -> Option<Vec<Glyph>> {
     fontdb.with_face_data(font.id, |font_data, face_index| -> Option<Vec<Glyph>> {
         use harfrust::{Feature, ShaperData, ShaperInstance, Tag, UnicodeBuffer, Variation};
@@ -1488,55 +1519,77 @@ fn shape_text_with_font(
 
         let (levels, runs) = bidi_info.visual_runs(paragraph, line);
         for run in runs.iter() {
-            let sub_text = &text[run.clone()];
-            if sub_text.is_empty() {
-                continue;
-            }
-
             let ltr = levels[run.start].is_ltr();
-            let direction = if ltr {
-                harfrust::Direction::LeftToRight
-            } else {
-                harfrust::Direction::RightToLeft
-            };
-
-            let mut buffer = UnicodeBuffer::new();
-            buffer.push_str(sub_text);
-            buffer.set_direction(direction);
-
-            // TODO: explicitly set language?
-            buffer.guess_segment_properties();
-
-            let output = shaper.shape(buffer, ShapeOptions::new().features(&features));
-
-            let positions = output.glyph_positions();
-            let infos = output.glyph_infos();
-
-            for i in 0..output.len() {
-                let pos = positions[i];
-                let info = infos[i];
-                let idx = run.start + info.cluster as usize;
-
-                let start = info.cluster as usize;
-
-                let end = if ltr {
-                    i.checked_add(1)
-                } else {
-                    i.checked_sub(1)
+            let mut segments = super::raster_glyph::segments(run.clone(), raster_glyphs);
+            if !ltr {
+                segments.reverse();
+            }
+            for (segment, raster) in segments {
+                let sub_text = &text[segment.clone()];
+                if sub_text.is_empty() {
+                    continue;
                 }
-                .and_then(|last| infos.get(last))
-                .map_or(sub_text.len(), |info| info.cluster as usize);
 
-                glyphs.push(Glyph {
-                    byte_idx: ByteIndex::new(idx),
-                    cluster_len: end.checked_sub(start).unwrap_or(0), // TODO: can fail?
-                    text: sub_text[start..end].to_string(),
-                    id: GlyphId(info.glyph_id),
-                    dx: pos.x_offset,
-                    dy: pos.y_offset,
-                    width: pos.x_advance,
-                    font: font.clone(),
-                });
+                if let Some(raster) = raster {
+                    glyphs.push(Glyph {
+                        byte_idx: ByteIndex::new(segment.start),
+                        cluster_len: segment.len(),
+                        text: sub_text.to_string(),
+                        id: GlyphId(0),
+                        dx: 0,
+                        dy: 0,
+                        width: (raster.advance / font.scale(font_size)).round() as i32,
+                        font: font.clone(),
+                        raster: Some(raster),
+                    });
+                    continue;
+                }
+
+                let direction = if ltr {
+                    harfrust::Direction::LeftToRight
+                } else {
+                    harfrust::Direction::RightToLeft
+                };
+
+                let mut buffer = UnicodeBuffer::new();
+                buffer.push_str(sub_text);
+                buffer.set_direction(direction);
+
+                // TODO: explicitly set language?
+                buffer.guess_segment_properties();
+
+                let output = shaper.shape(buffer, ShapeOptions::new().features(&features));
+
+                let positions = output.glyph_positions();
+                let infos = output.glyph_infos();
+
+                for i in 0..output.len() {
+                    let pos = positions[i];
+                    let info = infos[i];
+                    let idx = segment.start + info.cluster as usize;
+
+                    let start = info.cluster as usize;
+
+                    let end = if ltr {
+                        i.checked_add(1)
+                    } else {
+                        i.checked_sub(1)
+                    }
+                    .and_then(|last| infos.get(last))
+                    .map_or(sub_text.len(), |info| info.cluster as usize);
+
+                    glyphs.push(Glyph {
+                        byte_idx: ByteIndex::new(idx),
+                        cluster_len: end.checked_sub(start).unwrap_or(0), // TODO: can fail?
+                        text: sub_text[start..end].to_string(),
+                        id: GlyphId(info.glyph_id),
+                        dx: pos.x_offset,
+                        dy: pos.y_offset,
+                        width: pos.x_advance,
+                        font: font.clone(),
+                        raster: None,
+                    });
+                }
             }
         }
 
@@ -1615,6 +1668,7 @@ pub(crate) fn script_supports_letter_spacing(script: unicode_script::Script) -> 
 /// Basically, a glyph ID and it's metrics.
 #[derive(Clone)]
 pub(crate) struct Glyph {
+    pub(crate) raster: Option<Arc<crate::RasterGlyph>>,
     /// The glyph ID in the font.
     pub(crate) id: GlyphId,
 
@@ -1646,7 +1700,7 @@ pub(crate) struct Glyph {
 
 impl Glyph {
     fn is_missing(&self) -> bool {
-        self.id.0 == 0
+        self.id.0 == 0 && self.raster.is_none()
     }
 }
 

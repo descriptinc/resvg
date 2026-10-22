@@ -186,12 +186,19 @@ fn convert_polygon(node: SvgNode) -> Option<Arc<Path>> {
 }
 
 fn points_to_path(node: SvgNode, eid: &str) -> Option<tiny_skia_path::PathBuilder> {
-    use svgtypes::PointsParser;
+    use svgtypes::NumberListParser;
 
     let mut builder = tiny_skia_path::PathBuilder::new();
     match node.attribute::<&str>(AId::Points) {
         Some(text) => {
-            for (x, y) in PointsParser::from(text) {
+            let coordinates = NumberListParser::from(text)
+                .collect::<Result<Vec<_>, _>>()
+                .ok()?;
+            if coordinates.iter().any(|value| !(*value as f32).is_finite()) {
+                return None;
+            }
+            for point in coordinates.chunks_exact(2) {
+                let [x, y] = [point[0], point[1]];
                 if builder.is_empty() {
                     builder.move_to(x as f32, y as f32);
                 } else {
